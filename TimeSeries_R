@@ -1,0 +1,219 @@
+# Install necessary libraries
+
+install.packages("corrplot")
+library(corrplot)
+
+install.packages("stargazer")
+library(stargazer)
+
+library(lmtest)
+library(vars)
+
+library(ggplot2)
+
+options(warn= -1)
+
+# Import Data
+
+brand_df <- read.csv('timeseries_data.csv') 
+brand_df <- data.frame(brand_df)
+
+str(brand_df)
+
+summary(brand_df)
+
+# Explore missing(NAs) - No missing in dataset
+
+sum(is.na(brand_df))
+
+# Check data format - data is in the right format
+
+for (colname in names(brand_df)) {
+    datatype <- class(brand_df[[colname]])
+    print(paste(colname, ':', datatype))
+}
+
+
+options(repr.plot.width=6, repr.plot.height=4)
+
+# Plot Own 'Sales'
+plot(brand_df[,c(1)],brand_df[,c(2)], type="l", col="red", lwd=2, xlab="weeks", ylab="LnSales", main="The brand’s Sales") 
+
+# Plot Own 'Advertising'
+plot(brand_df[,c(1)],brand_df[,c(3)], type="l", col="red", lwd=2, xlab="weeks", ylab="LnAdvertising", main="The brand’s Advertising") 
+
+# Plot Own 'Price'
+plot(brand_df[,c(1)],brand_df[,c(4)], type="l", col="red", lwd=2, xlab="weeks", ylab="LnPrice", main="The brand’s Price") 
+
+# Plot Competitors 'Advertising'
+plot(brand_df[,c(1)],brand_df[,c(5)], type="l", col="red", lwd=2, xlab="weeks", ylab="LnTotalCompAdvertising", main="Competitors' Advertising")
+
+# Plot Competitors 'Price'
+plot(brand_df[,c(1)],brand_df[,c(6)], type="l", col="red", lwd=2, xlab="weeks", ylab="LnTotalCompPrice", main="Competitors' Price")
+
+
+# Correlation plot
+
+cor_matrix <- cor(brand_df[, 2:6])
+corrplot(cor_matrix, method = "circle")
+
+# Linear Regression
+
+brand_lm <- lm(LnSales~ LnAdvertising + LnPrice + LnTotalCompAdvertising + LnAvgCompPrice, data=brand_df) 
+
+
+stargazer(brand_lm, type="text")
+
+# Granger causality tests 
+
+# There are 5 endogenous variables -> 14 pairs to test
+pairs <- list(
+    c("LnSales", "LnAdvertising"),
+    c("LnSales", "LnPrice"),
+    c("LnSales", "LnTotalCompAdvertising"),
+    c("LnSales", "LnAvgCompPrice"),
+    c("LnAdvertising", "LnPrice"),
+    c("LnAdvertising", "LnTotalCompAdvertising"),
+    c("LnAdvertising", "LnAvgCompPrice"),
+    c("LnPrice", "LnAdvertising"),
+    c("LnPrice", "LnTotalCompAdvertising"),
+    c("LnPrice", "LnAvgCompPrice"),
+    c("LnTotalCompAdvertising", "LnPrice"),
+    c("LnTotalCompAdvertising", "LnAdvertising"),
+    c("LnAvgCompPrice", "LnPrice"),
+    c("LnAvgCompPrice", "LnAdvertising")
+)
+
+# We do 13 lags as it cover roughly one quarter of a year, capturing any seasonal effects that occur on a quarterly basis. 
+n_lag <- c(1,2,3,4,5,6,7,8,9,10,11,12,13)
+
+# Create an empty list to store results for all pairs & all lags
+granger_results_list <- list()
+
+# For Loop: for Granger Causality Test
+
+for (j in 1:length(pairs)) {
+    
+    granger_results_list[[j]] <- list()
+    current_pair <- pairs[[j]]
+    
+    for (i in n_lag) {
+        formula <- as.formula(paste(current_pair[1], "~", current_pair[2]))
+        granger_results_list[[j]][[i]] <- grangertest(formula, order = i, data = brand_df)
+    }
+}
+
+# Print Results
+for (j in 1:length(pairs)) {
+    cat("\nResults for pair:", paste(pairs[[j]], collapse=" and "), "\n")
+    for (i in n_lag) {
+        cat("Results for lag:", i, "\n")
+        print(granger_results_list[[j]][[i]])
+    }
+}
+
+
+library(aTSA)
+
+# nlag = 4 is used in ADF Test based on managerial insight that any effect will not last more than 4 weeks
+
+# Inspect own sales
+adf.test(brand_df[,c(2)], nlag = 4, output = TRUE) 
+pp.test(brand_df[,c(2)], output = TRUE) 
+kpss.test(brand_df[,c(2)], output = TRUE)
+
+# Inspect own advertising
+adf.test(brand_df[,c(3)], nlag = 4, output = TRUE) 
+pp.test(brand_df[,c(3)], output = TRUE) 
+kpss.test(brand_df[,c(3)], output = TRUE)
+
+# Inspect own price
+adf.test(brand_df[,c(4)], nlag = 4, output = TRUE) 
+pp.test(brand_df[,c(4)], output = TRUE) 
+kpss.test(brand_df[,c(4)], output = TRUE)
+
+# Inspect competitors'advertising
+adf.test(brand_df[,c(5)], nlag = 4, output = TRUE) 
+pp.test(brand_df[,c(5)], output = TRUE) 
+kpss.test(brand_df[,c(5)], output = TRUE)
+
+# Inspect competitors'price
+adf.test(brand_df[,c(6)], nlag = 4, output = TRUE) 
+pp.test(brand_df[,c(6)], output = TRUE) 
+kpss.test(brand_df[,c(6)], output = TRUE)
+
+
+# VAR model (Vector Auto Regression)
+
+brand_endovars = brand_df[,c(2,3,4,5,6)] # brand(sales/ads/price) & competitors(price/ads) are endogenous vars
+brand_exovars = brand_df[, c(7,8,9)] # Quarters' variable = exogeneous factor impact sales
+
+# VARselect: make decision on the optimal 'lag length' for a Vector Autoregressive (VAR) model 
+# Use lag.max 13: as strategic management is based on quarter level. 
+
+VARselect(brand_endovars, lag.max = 13, type = "both", season = NULL, exogen = brand_exovars)
+
+# Estimating the VAR model (above result suggest using p=1 as lag order in VARmodel)
+
+brand_varsmodel <- VAR(brand_endovars, p=1, type = "both", exogen = brand_exovars)
+summary(brand_varsmodel,"LnSales") 
+summary(brand_varsmodel,"LnAdvertising") 
+summary(brand_varsmodel,"LnPrice") 
+summary(brand_varsmodel,"LnTotalCompAdvertising") 
+summary(brand_varsmodel,"LnAvgCompPrice")
+
+# From VAR model (brand_varsmodel)
+# Estimate at 68% confidence interval
+
+# Plot 1 -----------
+brandirf1 <- irf(brand_varsmodel, impulse = NULL, response = "LnSales", n.ahead = 13,ortho = TRUE, cumulative = FALSE, boot = TRUE, ci = 0.68,
+runs = 500) 
+
+plot(brandirf1)
+
+
+# Plot 2 -----------
+brandirf2 <- irf(brand_varsmodel, impulse = NULL, response = "LnAdvertising", n.ahead = 13, ortho = TRUE, cumulative = TRUE, boot = TRUE, ci = 0.68,
+runs = 500)
+
+plot(brandirf2)
+
+
+# Plot 3 -----------
+brandirf3 <- irf(brand_varsmodel, impulse = NULL, response = "LnPrice", n.ahead = 13, ortho = TRUE, cumulative = TRUE, boot = TRUE, ci = 0.68,
+runs = 500)
+
+plot(brandirf3)
+
+# Plot 4 -----------
+brandirf4 <- irf(brand_varsmodel, impulse = NULL, response = "LnTotalCompAdvertising", n.ahead = 13, ortho = TRUE, cumulative = TRUE, boot = TRUE, ci = 0.68,
+runs = 500)
+
+plot(brandirf4)
+
+
+# Plot 5 -----------
+brandirf5 <- irf(brand_varsmodel, impulse = NULL, response = "LnAvgCompPrice", n.ahead = 13, ortho = TRUE, cumulative = TRUE, boot = TRUE, ci = 0.68,
+runs = 500)
+
+plot(brandirf5) 
+
+
+
+# Calculate FEVD
+brand_fevd <- fevd(brand_varsmodel, n.ahead = 13) 
+brand_fevd
+
+# Extract result & transform data
+barbasis1 = brand_fevd[1]
+barbasis2 = as.matrix(unlist(barbasis1),ncol = 5, byrow = TRUE)
+bartry = Reduce(rbind,brand_fevd) 
+bartry2 = t(bartry)
+bartry2 = bartry2[,c(13,26,39,52,65)]
+
+# Plot FEVD
+library(ggplot2) 
+library(RColorBrewer)
+
+barplot(bartry2, col = c("red", "grey", "white", "yellow", "orange"), xlab = "Sales - Advertise - Price - CompAd - CompPrice")
+legend("topright", legend = c("LnSales", "LnAdvertising", "LnPrice", "LnTotalCompAd", "LnAvgCompPrice"), fill = c("red", "grey", "white", "yellow", "orange"))
